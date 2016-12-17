@@ -19,6 +19,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: xbps
@@ -28,9 +32,7 @@ description:
 author:
     - "Dino Occhialini (@dinoocch)"
     - "Michael Aldridge (@the-maldridge)"
-notes: []
-requirements: []
-version_added: 2.2
+version_added: "2.3"
 options:
     name:
         description:
@@ -82,20 +84,21 @@ EXAMPLES = '''
 '''
 
 RETURN = '''
-changed:
-    description: whether xbps was changed
-    returned: success
-    type: boolean
-    sample: True
 msg:
     description: Message about results
     returned: success
     type: string
     sample: "System Upgraded"
+packages:
+    description: Packages that are affected/would be affected
+    type: list
+    sample: ["ansible"]
 '''
 
 
 import os
+
+from ansible.module_utils.basic import AnsibleModule
 
 
 def is_installed(xbps_output):
@@ -157,8 +160,8 @@ def upgrade(module, xbps_path):
 
 def remove_packages(module, xbps_path, packages):
     """Returns true if package removal succeeds"""
-    remove_c = 0
-    # Using a for loop incase of error, we can report the package that failed
+    changed_packages = []
+    # Using a for loop in case of error, we can report the package that failed
     for package in packages:
         # Query the package first, to see if we even need to remove
         installed, updated = query_package(module, xbps_path, package)
@@ -171,11 +174,12 @@ def remove_packages(module, xbps_path, packages):
         if rc != 0:
             module.fail_json(msg="failed to remove %s" % (package))
 
-        remove_c += 1
+        changed_packages.append(package)
 
-    if remove_c > 0:
+    if len(changed_packages) > 0:
 
-        module.exit_json(changed=True, msg="removed %s package(s)" % remove_c)
+        module.exit_json(changed=True, msg="removed %s package(s)" %
+                         len(changed_packages), packages=changed_packages)
 
     module.exit_json(changed=False, msg="package(s) already absent")
 
@@ -203,9 +207,11 @@ def install_packages(module, xbps_path, state, packages):
         module.fail_json(msg="failed to install %s" % (package))
 
     module.exit_json(changed=True, msg="installed %s package(s)"
-                     % (len(toInstall)))
+                     % (len(toInstall)),
+                     packages=toInstall)
 
-    module.exit_json(changed=False, msg="package(s) already installed")
+    module.exit_json(changed=False, msg="package(s) already installed",
+                     packages=[])
 
 
 def check_packages(module, xbps_path, packages, state):
@@ -221,21 +227,21 @@ def check_packages(module, xbps_path, packages, state):
         if state == "absent":
             state = "removed"
         module.exit_json(changed=True, msg="%s package(s) would be %s" % (
-            len(would_be_changed), state))
+            len(would_be_changed), state),
+            packages=would_be_changed)
     else:
-        module.exit_json(changed=False, msg="package(s) already %s" % state)
+        module.exit_json(changed=False, msg="package(s) already %s" % state,
+                         packages=[])
 
 
 def main():
     """Returns, calling appropriate command"""
 
-    mask = os.umask(0)  # fix the umask
-
     module = AnsibleModule(
         argument_spec=dict(
             name=dict(default=None, aliases=['pkg', 'package'], type='list'),
             state=dict(default='present', choices=['present', 'installed',
-                                                   "latest", 'absent',
+                                                   'latest', 'absent',
                                                    'removed']),
             recurse=dict(default=False, type='bool'),
             force=dict(default=False, type='bool'),
@@ -273,8 +279,8 @@ def main():
                 module.exit_json(changed=False,
                                  msg='Package list already up to date')
 
-    if p['update_cache'] and module.check_mode\
-       and not (p['name'] or p['upgrade']):
+    if (p['update_cache'] and module.check_mode and not
+            (p['name'] or p['upgrade'])):
         module.exit_json(changed=True,
                          msg='Would have updated the package cache')
 
@@ -292,10 +298,6 @@ def main():
         elif p['state'] == 'absent':
             remove_packages(module, xbps_path, pkgs)
 
-    os.umask(mask)  # Reset the umask to original value
-
-# import module snippets
-from ansible.module_utils.basic import *
 
 if __name__ == "__main__":
     main()
